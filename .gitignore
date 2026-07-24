@@ -1,0 +1,10 @@
+# Mailcow is vendored fresh on each deploy (see scripts/deploy-vps.sh) — it's
+# a large upstream project with its own git history, and generate_config.sh
+# writes secrets (DB/Redis passwords, API keys) into mailcow.conf plus
+# self-signed certs into data/assets/ssl/. None of that belongs in this repo.
+mailcow-dockerized/
+
+# macOS
+.DS_Store
+
+*.log

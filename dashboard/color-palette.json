@@ -1,0 +1,33 @@
+{
+  "name": "iColorPalette-purple",
+  "description": "Design tokens for the mail hosting dashboard, derived from a 5-color palette (background/surface/accent/text/border) generated at iColorPalette.com. Source of truth for src/app/globals.css @theme block — keep both in sync when changing. success/danger/warning intentionally stay conventional green/red/amber rather than palette-derived: none of the 5 source colors are green, and using the dark maroon (#86094a) as error *text* would be nearly illegible on a dark background.",
+  "sourceColors": ["#5f0f84", "#ce50ba", "#2c0a3e", "#86094a", "#261c3e"],
+  "dark": {
+    "background": "#261c3e",
+    "surface": "#2c0a3e",
+    "surfaceHover": "#3a1150",
+    "text": "#F3E8F5",
+    "textMuted": "#C9A8D6",
+    "accent": "#ce50ba",
+    "accentHover": "#dc78cc",
+    "accentText": "#FFFFFF",
+    "border": "#3a1150",
+    "success": "#10B981",
+    "danger": "#F87171",
+    "warning": "#F59E0B"
+  },
+  "light": {
+    "background": "#FAF7FC",
+    "surface": "#FFFFFF",
+    "surfaceHover": "#F3EAF7",
+    "text": "#2c0a3e",
+    "textMuted": "#6b4b7a",
+    "accent": "#5f0f84",
+    "accentHover": "#4a0c68",
+    "accentText": "#FFFFFF",
+    "border": "#E3D5EA",
+    "success": "#10B981",
+    "danger": "#DC2626",
+    "warning": "#F59E0B"
+  }
+}

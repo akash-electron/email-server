@@ -154,18 +154,76 @@ adding an MX record there would have conflicted with it).
    apparently wrong/inconsistent for this specific probing method. Trust an actual protocol-level
    delivery test over any port-availability tool when they disagree.
 
-## Phase 3 — Customer-facing app (separate repo, not started)
+## Phase 3 — Admin/signup dashboard app — built, locally verified
 
-Out of scope for this repo. Will be built as its own project, calling this layer's Mailcow API using
-the endpoints documented above and in `FLOW.md`. See `FLOW.md` for the full customer signup → domain
-verification → mailbox creation flow this app needs to implement.
+Scope changed mid-session: built **inside this repo** at `dashboard/` (not a separate repo as
+originally discussed) — Next.js 16 App Router + TypeScript + Tailwind v4, MongoDB via Mongoose
+(reusing the Reeltor cluster, dedicated `mailhosting` database), email+password JWT auth, React
+Server Components + Server Actions throughout (no hand-rolled API routes — per explicit requirement
+that "everything must be server side").
 
-Database decision: the app reuses the **existing Reeltor database instance** rather than standing up
-a new one — stores customer accounts, which domain/mailbox belongs to which customer, domain
-verification status, and plan limits. This is separate from Mailcow's own internal MariaDB, which
-only holds mail-engine state (domains/mailboxes/DKIM/quotas) and should only ever be touched through
-Mailcow's REST API, never directly. Exact schema/connection details to be confirmed when that app's
-repo is actually started.
+Conventions deliberately mirrored from sibling Reeltor projects (see the plan file for the full
+research): `src/app` + `src/modules`-style structure from `reeltor-admin-panel`, `proxy.ts` (not
+`middleware.ts` — renamed in Next 16) as the route guard shape, JWT-based auth matching
+`rentlog-property-service`'s pattern, and the `userId`-scoped compound-index ownership pattern from
+its `boostModel.js` applied to `Domain`/`Mailbox` documents.
+
+Design tokens live in `dashboard/color-palette.json` (Slate & Indigo palette, light+dark), mirrored
+into `src/app/globals.css`'s Tailwind v4 `@theme` block since v4 config is CSS-first, not JS.
+
+### What's built
+- Signup/login/logout via Server Actions (`src/actions/auth.ts`), bcrypt password hashing, JWT in an
+  httpOnly cookie
+- `src/proxy.ts` — UX-level route guard (redirects). **Not** the security boundary — every Server
+  Action independently calls `requireUser()` (`src/lib/auth.ts`), per Next's own docs: a proxy
+  matcher change can silently stop covering a Server Action without anyone noticing, since actions are
+  POSTs to the page route, not separate paths
+- `src/lib/mailcow.ts` — wraps the exact Mailcow endpoints hand-verified in `FLOW.md`
+  (add/domain, get/dkim, add/mailbox); `delete/mailbox` follows Mailcow's documented convention but
+  hasn't been tested against the real server yet
+- `src/lib/verifyDns.ts` — TypeScript port of `scripts/verify-domain-dns.sh` using `node:dns/promises`,
+  **improved over the shell version**: explicitly detects and fails on multiple SPF records (the shell
+  script only checked "at least one exists" — this would have missed the exact duplicate-SPF bug hit
+  earlier with `vasomanix.com`)
+- Domains page: add a domain (calls Mailcow, stores ownership), view its required DNS records (live
+  DKIM fetched from Mailcow), verify button
+- Mailboxes page per domain: add/remove mailboxes (ownership-checked against the ownning domain)
+
+### Local verification (real, not assumed)
+Ran against a throwaway local MongoDB container and the **real production Mailcow** at
+`mail-engine.reeltor.com` (no separate staging instance exists yet):
+- `npx tsc --noEmit` and `eslint` clean; `next build` succeeds
+- Signed up a real test user through the actual form (replicated the browser's progressive-enhancement
+  POST, including its hidden `$ACTION_*` fields) — confirmed bcrypt hash (not plaintext) written to Mongo
+- Logged in/out for real — logout was accidentally verified when a first attempt grabbed the wrong
+  form's action reference (two forms on one page) and correctly triggered logout instead of add-domain,
+  proving the action-reference wiring is real, not coincidental
+- Added `vasomanix.com` through the actual UI form — confirmed it called Mailcow for real and the
+  rendered DNS records (DKIM in particular) matched the exact known-good value from `FLOW.md`
+- Directly re-tested the `verifyDns.ts` DNS-resolution logic against live `vasomanix.com` records: first
+  run showed a phantom duplicate SPF record (transient DNS propagation/caching blip, gone on immediate
+  re-run and confirmed clean via `dig` against three resolvers) — a real caught-and-explained anomaly,
+  not a logic bug
+- Mailbox creation not re-tested live (reuses the identical `mailcowAddMailbox` call already proven in
+  Phase 2) to avoid creating throwaway mailboxes on the production Mailcow instance
+
+### Gotchas hit
+
+8. **Progressive-enhancement Server Action forms use hidden `$ACTION_*` fields per-form** — a page with
+   multiple forms (e.g. the dashboard layout's logout form + the add-domain form) has separate action
+   references; grabbing the wrong form's hidden fields silently invokes the wrong action instead of
+   erroring. Caught this by accident while replicating form submissions via `curl` for testing.
+9. **Tailwind v4 has no JS config file** — `color-palette.json` is documentation/source-of-truth only;
+   the actual values must be hand-mirrored into `globals.css`'s `@theme` block, since v4 moved to a
+   CSS-first config model with no automatic JSON import.
+10. **Next.js 16 renamed `middleware.ts` to `proxy.ts`** — caught via the `AGENTS.md` guardrail this
+    Next.js version ships with, prompting a docs check before writing route-guard code; would have
+    silently used a deprecated/non-functional filename otherwise.
+
+### Not done yet
+- Not deployed anywhere — verified locally only, per the plan's explicit scope
+- No password reset, no email verification on signup, no billing/plan limits enforcement
+- SOGo webmail not embedded in the dashboard
 
 ## Notes / Decisions Log
 

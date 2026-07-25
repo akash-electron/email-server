@@ -101,26 +101,71 @@ project with its own git history, and `generate_config.sh` writes secrets (DB/Re
 keys) into `mailcow.conf` plus self-signed certs into `data/assets/ssl/`. None of that belongs in
 version control. Instead, `scripts/deploy-vps.sh` clones it fresh on the VPS and configures it.
 
-### VPS deploy steps
+### VPS deploy steps — done
 
-- [ ] Add DNS records first: `A` record `mail-engine.<domain>` → VPS IP; `MX` record `<domain>` →
-  `mail-engine.<domain>`, priority 10
-- [ ] On the VPS: `git clone <this-repo>`, then `./scripts/deploy-vps.sh mail-engine.<domain>`
-  (script clones Mailcow, runs `generate_config.sh`, leaves Let's Encrypt **enabled** this time since
-  real DNS is live — opposite of local dev — and starts the stack)
-- [ ] Open required ports (25, 465, 587, 143, 993, 110, 995, 80, 443) + firewall (UFW/Fail2Ban)
-- [ ] Provision the real domain + a test mailbox via the same API calls verified in `FLOW.md`
-- [ ] Fetch the real DKIM record, add SPF/DKIM/DMARC TXT records, then run
-  `scripts/verify-domain-dns.sh <domain> mail-engine.<domain>` to confirm all pass for real
-- [ ] Re-verify SOGo webmail login on the real install (expect gotcha #4 above to not reproduce)
-- [ ] Real send/receive test: VPS mailbox → external Gmail, and Gmail → VPS mailbox
-- [ ] Set up daily backups
+Deployed on an existing Hostinger VPS (`srv574349.hstgr.cloud`, `194.238.23.44`) that already ran
+another app behind host nginx on 80/443. Mail hostname: `mail-engine.reeltor.com`. Test mail domain:
+`vasomanix.com` (deliberately separate from `reeltor.com`, which already has its own real email —
+adding an MX record there would have conflicted with it).
+
+- [x] DNS: `A` record `mail-engine.reeltor.com` → VPS IP (**must be DNS-only, not Cloudflare-proxied**
+  — proxying breaks mail protocols entirely, see gotcha #5); `MX` record `vasomanix.com` →
+  `mail-engine.reeltor.com`, priority 1
+- [x] `deploy-vps.sh` rewritten to write `mailcow.conf` directly instead of calling
+  `generate_config.sh` (unreliable even on Linux when piping input non-interactively) and to
+  auto-detect if 80/443 are already bound, rebinding Mailcow's web UI to `127.0.0.1:8082/8443` with
+  its own Let's Encrypt disabled when so
+- [x] Deployed successfully behind the existing host nginx, which already had a working reverse proxy
+  + certbot cert for `mail-engine.reeltor.com` (real Let's Encrypt cert confirmed, issued by R3/YE2,
+  valid Jul–Oct 2026)
+- [x] Domain `vasomanix.com` + mailbox `admin@vasomanix.com` provisioned via the API directly from
+  outside (no VPS shell needed for this part — confirms the API is genuinely usable remotely, which is
+  the whole point for the future signup app)
+- [x] DKIM/SPF/DMARC TXT records added and verified via `verify-domain-dns.sh` (4/4 pass)
+- [x] Mail ports opened in `ufw` (25, 465, 587, 143, 993, 110, 995, 4190)
+- [x] Real send/receive test, both directions:
+  - Outbound (`vasomanix.com` → Gmail): sent via authenticated SMTP submission (587). Gmail's own
+    headers confirm `dkim=pass`, `spf=pass`, `dmarc=pass` — full authentication chain verified, not
+    just delivery.
+  - Inbound (Gmail → `vasomanix.com`): confirmed via Postfix logs — real connection from
+    `mail-yw1-f179.google.com`, TLS negotiated, `status=sent ... Saved` into the mailbox.
+- [ ] Set up daily backups (not done yet)
+- [ ] Change default Mailcow admin password from `admin`/`moohoo` (pending)
+
+### Gotchas hit on the VPS deploy
+
+5. **Cloudflare proxy breaks mail hostnames** — briefly had the `A` record for `mail-engine.reeltor.com`
+   proxied (orange cloud) by mistake. Cloudflare's proxy only handles HTTP/HTTPS; SMTP/IMAP/etc. don't
+   route through it at all, so the record must be DNS-only.
+6. **Registrar default email-forwarding records conflict with real MX/SPF** — `vasomanix.com` had
+   pre-existing `eforward*.registrar-servers.com` MX records and a matching SPF `include:` from the
+   registrar's default forwarding service, despite the user believing there was no existing email
+   setup. Two `v=spf1` TXT records on the same domain is invalid (causes SPF PermError) and multiple
+   equal-priority MX records cause unpredictable split routing. Removed both before proceeding — worth
+   checking for on every new domain, not just ones with obviously "real" existing email.
+7. **Hostinger blocks inbound port 25 by default per-VPS** (anti-spam policy, common across budget
+   providers) — `ufw` allowing it and Postfix correctly listening were not enough; the block is at the
+   network edge, invisible to anything running on the VPS itself. Confirmed via Postfix logs showing
+   zero connection attempts on port 25 despite everything else (465/587/143/993/110/995) working.
+   Outbound port 25 was unaffected (confirmed via `curl telnet://` from the VPS to Gmail's MX). No
+   self-service fix — needs a support request. **Once actually unblocked, the real proof was a live
+   Gmail→mailbox test, not any port-scanner tool** — an automated external check (from a different
+   sandbox/tool) reported the port open while a same-purpose script reported it closed, both
+   apparently wrong/inconsistent for this specific probing method. Trust an actual protocol-level
+   delivery test over any port-availability tool when they disagree.
 
 ## Phase 3 — Customer-facing app (separate repo, not started)
 
 Out of scope for this repo. Will be built as its own project, calling this layer's Mailcow API using
 the endpoints documented above and in `FLOW.md`. See `FLOW.md` for the full customer signup → domain
 verification → mailbox creation flow this app needs to implement.
+
+Database decision: the app reuses the **existing Reeltor database instance** rather than standing up
+a new one — stores customer accounts, which domain/mailbox belongs to which customer, domain
+verification status, and plan limits. This is separate from Mailcow's own internal MariaDB, which
+only holds mail-engine state (domains/mailboxes/DKIM/quotas) and should only ever be touched through
+Mailcow's REST API, never directly. Exact schema/connection details to be confirmed when that app's
+repo is actually started.
 
 ## Notes / Decisions Log
 

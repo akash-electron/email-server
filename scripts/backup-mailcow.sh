@@ -29,6 +29,9 @@ echo "==> $(date '+%F %T') starting Mailcow backup into ${BACKUP_DIR}"
 MAILCOW_BACKUP_LOCATION="${BACKUP_DIR}" THREADS="${THREADS:-2}" \
   "${MAILCOW_DIR}/helper-scripts/backup_and_restore.sh" backup all --delete-days "${KEEP_DAYS}"
 
+# Backups include mailcow.conf (DB/Redis passwords) and all mail: root only.
+find "${BACKUP_DIR}" -mindepth 1 -exec chmod go-rwx {} +
+
 if [[ -n "${RSYNC_TARGET}" ]]; then
   echo "==> Copying offsite to ${RSYNC_TARGET}"
   rsync -a --delete "${BACKUP_DIR}/" "${RSYNC_TARGET}"

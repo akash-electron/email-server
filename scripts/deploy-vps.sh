@@ -179,14 +179,15 @@ EOF
 fi
 
 # Defensive: self-signed cert assets used as a fallback by some components
-# even when SKIP_LETS_ENCRYPT=y; make sure they exist.
+# even when SKIP_LETS_ENCRYPT=y; make sure they exist. The subject must contain
+# "mailcow": acme-mailcow skips Let's Encrypt for any other self-signed issuer.
 mkdir -p data/assets/ssl
 if [[ ! -f data/assets/ssl/dhparams.pem ]]; then
   echo "==> Generating self-signed ssl assets"
   mkdir -p data/assets/ssl-example
   openssl req -x509 -newkey rsa:4096 -keyout data/assets/ssl-example/key.pem \
     -out data/assets/ssl-example/cert.pem -days 365 \
-    -subj "/CN=${HOSTNAME_ARG}" -sha256 -nodes
+    -subj "/C=DE/ST=NRW/L=Willich/O=mailcow/OU=mailcow/CN=${HOSTNAME_ARG}" -sha256 -nodes
   openssl dhparam -out data/assets/ssl-example/dhparams.pem 2048
   cp data/assets/ssl-example/*.pem data/assets/ssl/
 fi

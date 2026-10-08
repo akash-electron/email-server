@@ -22,7 +22,8 @@ RSYNC_TARGET="${RSYNC_TARGET:-}"
 [[ "${KEEP_DAYS}" =~ ^[0-9]+$ ]] || { echo "KEEP_DAYS must be a number" >&2; exit 1; }
 
 mkdir -p "${BACKUP_DIR}"
-chmod 700 "${BACKUP_DIR}"
+# Mailcow's backup refuses dirs whose "others" bits are not 5-7 (container user).
+chmod 755 "${BACKUP_DIR}"
 
 echo "==> $(date '+%F %T') starting Mailcow backup into ${BACKUP_DIR}"
 MAILCOW_BACKUP_LOCATION="${BACKUP_DIR}" THREADS="${THREADS:-2}" \

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Usage: ./scripts/deploy-vps.sh <mail-hostname>
-# Example: ./scripts/deploy-vps.sh mail-engine.domain.com
+# Usage: ACME_EMAIL=you@domain.com [CF_Token=<cloudflare-token>] \
+#          ./scripts/deploy-vps.sh <mail-hostname>
+# Example: ACME_EMAIL=ops@traffsite.com CF_Token=xxxx ./scripts/deploy-vps.sh mail.traffsite.com
 #
 # Run this ON THE VPS (Ubuntu, Docker + Docker Compose already installed).
 # Clones mailcow-dockerized fresh and writes mailcow.conf directly (skips
@@ -10,11 +11,17 @@
 # Auto-detects if ports 80/443 are already taken (e.g. by an existing nginx
 # serving other apps on this box) and if so, binds Mailcow's web UI to
 # 127.0.0.1:8082/8443 instead and disables Mailcow's own Let's Encrypt --
-# you then front it with your existing reverse proxy + certbot. Prints
-# exactly what to do either way at the end.
+# you then front it with your existing reverse proxy (Coolify/Traefik, Caddy,
+# nginx...). Prints exactly what to do either way at the end.
+#
+# Certificates for the mail ports (465/587/993/995...) never pass through the
+# reverse proxy, so in proxy mode Mailcow's own ACME container issues them with
+# the DNS-01 challenge (needs CF_Token: Cloudflare token, Zone > DNS > Edit on
+# the hostname's zone). It writes the token to data/conf/acme/dns-01.conf and
+# renews + reloads Postfix/Dovecot by itself.
 #
 # Before running: add DNS records —
-#   A record:  <mail-hostname>        -> this VPS's public IP
+#   A record:  <mail-hostname>        -> this VPS's public IP (DNS only, NOT proxied)
 #   MX record: <your-mail-domain>     -> <mail-hostname>, priority 10
 set -euo pipefail
 
@@ -24,6 +31,8 @@ if [[ $# -ne 1 ]]; then
 fi
 
 HOSTNAME_ARG="$1"
+ACME_EMAIL="${ACME_EMAIL:-}"
+CF_Token="${CF_Token:-}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MAILCOW_DIR="${REPO_DIR}/mailcow-dockerized"
 
@@ -52,17 +61,29 @@ else
   HTTP_BIND_VAL=
   HTTPS_BIND_VAL=
   SKIP_LE=n
+  ACME_DNS=n
 
   if port_busy 80 || port_busy 443; then
     echo "==> Ports 80/443 are already in use on this host (existing web server detected)."
     echo "    Binding Mailcow's web UI to 127.0.0.1:8082/8443 instead, and disabling its"
-    echo "    own Let's Encrypt -- front it with your existing reverse proxy + certbot."
+    echo "    own HTTP Let's Encrypt; mail-port certs are issued via DNS-01 (Cloudflare)."
     BEHIND_PROXY=y
     HTTP_PORT_VAL=8082
     HTTPS_PORT_VAL=8443
     HTTP_BIND_VAL=127.0.0.1
     HTTPS_BIND_VAL=127.0.0.1
-    SKIP_LE=y
+    SKIP_LE=n
+    ACME_DNS=y
+    if [[ -z "${CF_Token}" ]]; then
+      echo "ERROR: ports 80/443 are busy, so DNS-01 is needed for the mail-port certificate." >&2
+      echo "       Re-run with CF_Token=<Cloudflare token with Zone > DNS > Edit>." >&2
+      exit 1
+    fi
+  fi
+
+  if [[ -z "${ACME_EMAIL}" ]]; then
+    echo "ERROR: set ACME_EMAIL=<real address> (Let's Encrypt account / expiry notices)." >&2
+    exit 1
   fi
 
   echo "==> Writing mailcow.conf for hostname ${HOSTNAME_ARG}"
@@ -106,9 +127,9 @@ AUTODISCOVER_SAN=y
 ADDITIONAL_SERVER_NAMES=
 
 SKIP_LETS_ENCRYPT=${SKIP_LE}
-ACME_DNS_CHALLENGE=n
-ACME_DNS_PROVIDER=dns_xxx
-ACME_ACCOUNT_EMAIL=me@example.com
+ACME_DNS_CHALLENGE=${ACME_DNS}
+ACME_DNS_PROVIDER=dns_cf
+ACME_ACCOUNT_EMAIL=${ACME_EMAIL}
 
 ENABLE_SSL_SNI=n
 SKIP_IP_CHECK=n
@@ -147,6 +168,14 @@ DISABLE_NETFILTER_ISOLATION_RULE=n
 EOF
 
   echo "BEHIND_PROXY=${BEHIND_PROXY}" > .deploy-vps-state
+
+  if [[ "${ACME_DNS}" = "y" ]]; then
+    mkdir -p data/conf/acme
+    umask 077
+    printf "export CF_Token='%s'\n" "${CF_Token}" > data/conf/acme/dns-01.conf
+    umask 022
+    echo "==> Wrote Cloudflare token to data/conf/acme/dns-01.conf (mode 600)"
+  fi
 fi
 
 # Defensive: self-signed cert assets used as a fallback by some components
@@ -189,9 +218,13 @@ EOF
 if [[ "${BEHIND_PROXY_FINAL}" = "y" ]]; then
   cat <<EOF
 2. Mailcow's web UI is on 127.0.0.1:8082 (HTTP) / 127.0.0.1:8443 (HTTPS),
-   NOT exposed publicly. Add a server block to your existing nginx for
-   ${HOSTNAME_ARG} that gets a real cert via certbot and proxies to
-   http://127.0.0.1:8082 -- ask for the exact nginx config if needed.
+   NOT exposed publicly. Put ${HOSTNAME_ARG} behind your reverse proxy,
+   forwarding to http://127.0.0.1:8082 (Coolify/Traefik: add a dynamic config
+   or a proxied service for that host; nginx/Caddy: a plain reverse_proxy).
+   The mail-port certificate is separate: watch it being issued with
+     docker compose logs -f acme-mailcow
+   then verify (should say Let's Encrypt, not self-signed):
+     echo | openssl s_client -starttls smtp -connect ${HOSTNAME_ARG}:587 2>/dev/null | openssl x509 -noout -issuer -dates
 EOF
 else
   cat <<EOF

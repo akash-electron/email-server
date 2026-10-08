@@ -172,7 +172,7 @@ EOF
   if [[ "${ACME_DNS}" = "y" ]]; then
     mkdir -p data/conf/acme
     umask 077
-    printf "export CF_Token='%s'\n" "${CF_Token}" > data/conf/acme/dns-01.conf
+    printf "CF_Token='%s'\n" "${CF_Token}" > data/conf/acme/dns-01.conf
     umask 022
     echo "==> Wrote Cloudflare token to data/conf/acme/dns-01.conf (mode 600)"
   fi
